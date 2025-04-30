@@ -1,175 +1,252 @@
+import numpy as np
+import matplotlib.pyplot as pl
 import torch
 import torch.nn as nn
+import torch.utils.data as data
+from torch.autograd import Variable
+import h5py
+import shutil
+from tqdm import tqdm
+import matplotlib.animation as animation
+from astropy.io import fits
+import glob
+import os
+from skimage.feature import register_translation
 
-class conv_block(nn.Module):
-    def __init__(self, inplanes, outplanes, kernel_size=3, stride=1, upsample=False):
-        super(conv_block, self).__init__()
-        self.upsample = upsample
+import model
+
+class optical_flow(object):
+    def __init__(self, n_pixel=256, checkpoint=None):
+        self.cuda = torch.cuda.is_available()
+        self.device = torch.device("cuda" if self.cuda else "cpu")
+        self.n_pixel = n_pixel
         
-        if (upsample):
-            self.conv = nn.Conv2d(inplanes, outplanes, kernel_size=kernel_size, stride=1)
-        else:
-            self.conv = nn.Conv2d(inplanes, outplanes, kernel_size=kernel_size, stride=stride)
+        self.model = model.network(n_pixel=n_pixel, device=self.device).to(self.device)
 
-        nn.init.kaiming_normal_(self.conv.weight)
-        nn.init.constant_(self.conv.bias, 0.1)
-
-        self.reflection = nn.ReflectionPad2d((kernel_size-1)//2)
-        self.bn = nn.BatchNorm2d(inplanes)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        out = self.bn(x)
-        out = self.relu(out)
-        
-        if (self.upsample):
-            out = torch.nn.functional.interpolate(out, scale_factor=2)
-
-        out = self.reflection(out)
-        out = self.conv(out)
+        if (checkpoint is None):
+            files = glob.glob('trained/*.pth')
+            self.checkpoint = max(files, key=os.path.getctime)
             
-        return out
-    
-class network_optical_flow(nn.Module):
-    def __init__(self, n_channels=32):
-        super(network_optical_flow, self).__init__()
-        self.A01 = conv_block(2, n_channels)
-        
-        self.C01 = conv_block(n_channels, 2*n_channels, stride=2)
-        self.C02 = conv_block(2*n_channels, 2*n_channels)
-        self.C03 = conv_block(2*n_channels, 2*n_channels)
-        self.C04 = conv_block(2*n_channels, 2*n_channels)
-        
-        self.C11 = conv_block(2*n_channels, 2*n_channels)
-        self.C12 = conv_block(2*n_channels, 2*n_channels)
-        self.C13 = conv_block(2*n_channels, 2*n_channels)
-        self.C14 = conv_block(2*n_channels, 2*n_channels)
-        
-        self.C21 = conv_block(2*n_channels, 4*n_channels, stride=2)
-        self.C22 = conv_block(4*n_channels, 4*n_channels)
-        self.C23 = conv_block(4*n_channels, 4*n_channels)
-        self.C24 = conv_block(4*n_channels, 4*n_channels)
-        
-        self.C31 = conv_block(4*n_channels, 8*n_channels, stride=2)
-        self.C32 = conv_block(8*n_channels, 8*n_channels)
-        self.C33 = conv_block(8*n_channels, 8*n_channels)
-        self.C34 = conv_block(8*n_channels, 8*n_channels)
-        
-        self.C41 = conv_block(8*n_channels, 4*n_channels, stride=2, upsample=True)
-        self.C42 = conv_block(4*n_channels, 4*n_channels)
-        self.C43 = conv_block(4*n_channels, 4*n_channels)
-        self.C44 = conv_block(4*n_channels, 4*n_channels)
-        
-        self.C51 = conv_block(4*n_channels, 2*n_channels, stride=2, upsample=True)
-        self.C52 = conv_block(2*n_channels, 2*n_channels)
-        self.C53 = conv_block(2*n_channels, 2*n_channels)
-        self.C54 = conv_block(2*n_channels, 2*n_channels)
-
-        self.C61 = conv_block(2*n_channels, n_channels, stride=2, upsample=True)
-        self.C62 = conv_block(n_channels, n_channels)
-        self.C63 = conv_block(n_channels, n_channels)        
-        
-        self.C64 = nn.Conv2d(n_channels, 2, kernel_size=1, stride=1)
-        nn.init.kaiming_normal_(self.C64.weight)
-        nn.init.constant_(self.C64.bias, 0.1)
-
-        self.tanh = nn.Tanh()
-                
-    def forward(self, x):
-        A01 = self.A01(x)
-
-        # N -> N/2
-        C01 = self.C01(A01)
-        C02 = self.C02(C01)
-        C03 = self.C03(C02)        
-        C04 = self.C04(C03)
-        C04 += C01
-        
-        # N/2 -> N/2
-        C11 = self.C11(C04)
-        C12 = self.C12(C11)
-        C13 = self.C13(C12)        
-        C14 = self.C14(C13)
-        C14 += C11
-        
-        # N/2 -> N/4
-        C21 = self.C21(C14)
-        C22 = self.C22(C21)
-        C23 = self.C23(C22)        
-        C24 = self.C24(C23)
-        C24 += C21
-        
-        # N/4 -> N/8
-        C31 = self.C31(C24)
-        C32 = self.C32(C31)
-        C33 = self.C33(C32)        
-        C34 = self.C34(C33)
-        C34 += C31
-        
-        C41 = self.C41(C34)
-        C41 += C24
-        C42 = self.C42(C41)
-        C43 = self.C43(C42)
-        C44 = self.C44(C43)
-        C44 += C41
-
-        C51 = self.C51(C44)
-        C51 += C14
-        C52 = self.C52(C51)
-        C53 = self.C53(C52)
-        C54 = self.C54(C53)
-        C54 += C51
-        
-        C61 = self.C61(C54)        
-        C62 = self.C62(C61)
-        C63 = self.C63(C62)
-        out = self.C64(C63)      
-
-        return self.tanh(out)
-    
-class network_spatial_transformer(nn.Module):
-    def __init__(self, n_pixel, device):
-        super(network_spatial_transformer, self).__init__()
-
-        self.device = device
-        self.n_pixel = n_pixel
-
-        x = torch.linspace(-1,1,n_pixel)
-        y = torch.linspace(-1,1,n_pixel)
-        X, Y = torch.meshgrid([x, y])
-
-        self.reference = torch.zeros((n_pixel, n_pixel, 2))
-        self.reference[:,:,0] = Y
-        self.reference[:,:,1] = X
-
-        self.reference = self.reference.to(self.device)
-        
-    def forward(self, x, flow):
-        flow_reshape = flow.transpose(1,2).transpose(2,3)
-
-        out = torch.nn.functional.grid_sample(x, flow_reshape + self.reference[None,:,:,:])
-        
-        return out
-    
-class network(nn.Module):
-    def __init__(self, n_pixel, device):
-        super(network, self).__init__()
-        self.n_pixel = n_pixel
-        self.optical_flow = network_optical_flow(n_channels=8)
-        self.deformation = network_spatial_transformer(n_pixel, device)
-        
-    def forward(self, x, backward=True):
-        
-        
-        flow_forward = self.optical_flow(x)
-        out_forward = self.deformation(x[:,0:1,:,:], flow_forward * 64.0 / self.n_pixel)
-
-        if (backward):
-            x_flip = torch.flip(x, [1])
-            flow_backward = self.optical_flow(x_flip)
-            out_backward = self.deformation(x[:,1:2,:,:], flow_backward * 64.0 / self.n_pixel)
-        
-            return out_forward, out_backward, flow_forward, flow_backward
-
         else:
-            return out_forward, flow_forward
+            self.checkpoint = '{0}.pth'.format(checkpoint)
+                        
+        print("=> loading checkpoint '{}'".format(self.checkpoint))
+        if (self.cuda):
+            checkpoint = torch.load(self.checkpoint)
+        else:
+            checkpoint = torch.load(self.checkpoint, map_location=lambda storage, loc: storage)
+        self.model.load_state_dict(checkpoint['state_dict'])        
+        print("=> loaded checkpoint '{}'".format(self.checkpoint))
+
+    def test(self):
+        pl.close('all')
+
+        self.model.eval()
+
+        steps = (slice(None,None,2),slice(None,None,2))
+
+        f0 = fits.open('/net/nas/proyectos/fis/aasensio/deep_learning/deepvel_jess/CaK/destretched_02520.fits')
+        f1 = fits.open('/net/nas/proyectos/fis/aasensio/deep_learning/deepvel_jess/CaK/destretched_02534.fits')
+
+        ims = np.zeros((1,2,self.n_pixel,self.n_pixel))
+        ims[0,0,:,:] = f0[0].data[512:512+self.n_pixel,512:512+self.n_pixel]
+        ims[0,1,:,:] = f1[0].data[512:512+self.n_pixel,512:512+self.n_pixel]
+
+        minim = np.min(ims, axis=(2,3))
+        maxim = np.max(ims, axis=(2,3))
+
+        ims = (ims - minim[:,:,None,None]) / (maxim[:,:,None,None] - minim[:,:,None,None])
+
+        ims = torch.from_numpy(ims.astype('float32'))
+        ims = ims.to(self.device)     
+        
+        out_forward, out_backward, flow_forward, flow_backward = self.model(ims)
+
+        output = out_forward.cpu().data.numpy()
+        flow = flow_forward.cpu().data.numpy()  
+
+        flowx = flow[0,0,:,:]
+        flowy = flow[0,1,:,:]
+
+        ims = ims.cpu().data.numpy()        
+        
+        f, ax = pl.subplots(nrows=2, ncols=4, figsize=(14,6))        
+        ax[0,0].imshow(ims[0,0,:,:])
+        ax[0,1].imshow(ims[0,1,:,:])
+        ax[0,2].imshow(flow[0,0,:,:])
+        ax[0,3].imshow(flow[0,1,:,:])
+
+        ax[1,0].imshow(output[0,0,:,:])
+        ax[1,1].imshow(ims[0,0,:,:]-output[0,0,:,:])
+        ax[1,2].imshow(ims[0,1,:,:]-output[0,0,:,:])        
+        
+        ax[0,0].set_title('Input 1')
+        ax[0,1].set_title('Input 2')
+        ax[0,2].set_title('Flow x')
+        ax[0,3].set_title('Flow y')
+
+        ax[1,0].set_title('NN')
+        ax[1,1].set_title('NN-I1 {0}'.format(np.std(ims[0,0,:,:]-output[0,0,:,:])))
+        ax[1,2].set_title('NN-I2 {0}'.format(np.std(ims[0,1,:,:]-output[0,0,:,:])))
+
+        f, ax = pl.subplots()
+        x = np.arange(self.n_pixel)
+        y = np.arange(self.n_pixel)
+        X, Y = np.meshgrid(x, y)
+        ax.imshow(ims[0,0,:,:])
+        Q = ax.quiver(X[steps], Y[steps], 0.5*self.n_pixel*flowx[steps], 0.5*self.n_pixel*flowy[steps], scale=10, units='inches', color='yellow')
+        qk = ax.quiverkey(Q, 0.9, 0.9, 1, r'$2 \frac{m}{s}$', labelpos='E',  coordinates='figure', color='k')
+        
+
+        pl.show()
+        stop()
+
+    def updatefig(self, *args):
+        f0 = fits.open(self.files[self.loop])
+        f1 = fits.open(self.files[self.loop+1])
+
+        with torch.no_grad():
+
+            ims = np.zeros((1,2,self.n_pixel,self.n_pixel))
+            ims[0,0,:,:] = f0[0].data[self.origin:self.origin+self.n_pixel,self.origin:self.origin+self.n_pixel]
+            ims[0,1,:,:] = f1[0].data[self.origin:self.origin+self.n_pixel,self.origin:self.origin+self.n_pixel]
+
+            minim = np.min(ims, axis=(2,3))
+            maxim = np.max(ims, axis=(2,3))
+
+            ims = (ims - minim[:,:,None,None]) / (maxim[:,:,None,None] - minim[:,:,None,None])
+
+            shift, error, diffphase = register_translation(self.reference, ims[0,1,:,:])
+            shift = [int(f) for f in shift]                            
+            ims[0,1,:,:] = np.roll(ims[0,1,:,:], shift, axis=(0,1))
+
+            shift, error, diffphase = register_translation(self.reference, ims[0,0,:,:])
+            shift = [int(f) for f in shift]                            
+            ims[0,0,:,:] = np.roll(ims[0,0,:,:], shift, axis=(0,1))
+
+            ims = torch.from_numpy(ims.astype('float32'))
+            ims = ims.to(self.device)     
+            
+            out_forward, flow_forward = self.model(ims, backward=False)
+
+            output = out_forward.cpu().data.numpy()
+            flow = flow_forward.cpu().data.numpy()  
+
+            ims = ims.cpu().data.numpy()
+
+            flowx = flow[0,0,:,:]
+            flowy = flow[0,1,:,:]
+
+        f0.close()
+        f1.close()
+
+        flowx *= self.scale
+        flowy *= self.scale
+        
+        self.im1.set_array(np.flip(ims[0,0,:,:], axis=0))
+        self.im2.set_array(np.flip(ims[0,1,:,:], axis=0))
+        self.flowx.set_array(np.flip(flow[0,0,:,:], axis=0))
+        self.flowy.set_array(np.flip(flow[0,1,:,:], axis=0))
+        self.Q.set_UVC(self.n_pixel*flowx[self.steps], self.n_pixel*flowy[self.steps])
+
+        self.loop += 1
+        self.pbar.update(1)
+
+        return self.im1, self.im2, self.flowx, self.flowy
+
+    def movie(self):
+
+        self.origin = 512
+        self.model.eval()
+
+        self.scale = 0.18
+
+        self.files = glob.glob('/net/nas/proyectos/fis/aasensio/deep_learning/deepvel_jess/CaK/destretched_*.fits')
+        self.files.sort()
+
+        self.n_frames = len(self.files) - 2
+
+        self.loop = 0
+
+        f0 = fits.open(self.files[self.loop])
+        f1 = fits.open(self.files[self.loop+1])
+
+        self.reference = f0[0].data[self.origin:self.origin+self.n_pixel,self.origin:self.origin+self.n_pixel]
+
+        with torch.no_grad():
+
+            ims = np.zeros((1,2,self.n_pixel,self.n_pixel))
+            ims[0,0,:,:] = f0[0].data[self.origin:self.origin+self.n_pixel,self.origin:self.origin+self.n_pixel]
+            ims[0,1,:,:] = f1[0].data[self.origin:self.origin+self.n_pixel,self.origin:self.origin+self.n_pixel]
+
+            minim = np.min(ims, axis=(2,3))
+            maxim = np.max(ims, axis=(2,3))
+
+            ims = (ims - minim[:,:,None,None]) / (maxim[:,:,None,None] - minim[:,:,None,None])
+
+            shift, error, diffphase = register_translation(self.reference, ims[0,1,:,:])
+            shift = [int(f) for f in shift]                            
+            ims[0,1,:,:] = np.roll(ims[0,1,:,:], shift, axis=(0,1))
+
+            shift, error, diffphase = register_translation(self.reference, ims[0,0,:,:])
+            shift = [int(f) for f in shift]                            
+            ims[0,0,:,:] = np.roll(ims[0,0,:,:], shift, axis=(0,1))
+
+            ims = torch.from_numpy(ims.astype('float32'))
+            ims = ims.to(self.device)     
+            
+            out_forward, flow_forward = self.model(ims, backward=False)
+
+            output = out_forward.cpu().data.numpy()
+            flow = flow_forward.cpu().data.numpy()  
+
+            flowx = flow[0,0,:,:]
+            flowy = flow[0,1,:,:]
+
+            ims = ims.cpu().data.numpy()
+
+        f0.close()
+        f1.close()
+
+        x = np.arange(self.n_pixel)
+        y = np.arange(self.n_pixel)
+        X, Y = np.meshgrid(x, y)
+        X = X * self.scale
+        Y = Y * self.scale
+
+        flowx *= self.scale
+        flowy *= self.scale
+
+        self.steps = (slice(None,None,2),slice(None,None,2))
+
+        f, ax = pl.subplots(nrows=2, ncols=2, figsize=(12,10))
+        self.im1 = ax[0,0].imshow(np.flip(ims[0,0,:,:], axis=0), extent=[0,self.n_pixel*self.scale,0,self.n_pixel*self.scale])
+        self.Q = ax[0,0].quiver(X[self.steps], Y[self.steps], self.n_pixel*flowx[self.steps], self.n_pixel*flowy[self.steps], scale=10, units='inches', headwidth=3, headlength=3, color='yellow')
+        self.im2 = ax[0,1].imshow(np.flip(ims[0,1,:,:], axis=0), extent=[0,self.n_pixel*self.scale,0,self.n_pixel*self.scale])
+        self.flowx = ax[1,0].imshow(np.flip(flowx, axis=0), extent=[0,self.n_pixel*self.scale,0,self.n_pixel*self.scale])
+        self.flowy = ax[1,1].imshow(np.flip(flowy, axis=0), extent=[0,self.n_pixel*self.scale,0,self.n_pixel*self.scale])
+        qk = ax[0,0].quiverkey(self.Q, 0.9, 0.9, 1, r'$2 \frac{m}{s}$', labelpos='E',  coordinates='figure', color='k')
+        
+        ax[0,0].set_title('Input 1')
+        ax[0,1].set_title('Input 2')
+        ax[1,0].set_title('Flow x')
+        ax[1,1].set_title('Flow y')
+
+        self.pbar = tqdm(total=self.n_frames)
+
+        self.loop += 1
+
+        frames = self.n_frames
+        #frames = 20
+
+        ani = animation.FuncAnimation(f, self.updatefig, interval=100, blit=True, frames=frames-2)
+
+        ani.save('CaK.mp4')                
+
+        self.pbar.close()
+
+        
+
+optical_flow_network = optical_flow(n_pixel=128)
+#optical_flow_network.test()
+optical_flow_network.movie()
