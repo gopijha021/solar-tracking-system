@@ -121,5 +121,10 @@ Demonstrates that CNNs can be lightweight alternatives to LSTM for temporal pred
 
 ![image](https://github.com/user-attachments/assets/ff08b420-7977-4cb4-96a9-07f3fb9e8741)
 
+![image](https://github.com/user-attachments/assets/62ed370d-40f9-4e83-a01d-a890e034e5c1)
+![image](https://github.com/user-attachments/assets/ff0c9f87-c49b-4855-8110-26e3f71ccba1)
+![image](https://github.com/user-attachments/assets/b3052d47-2d06-4d55-8afd-2c51c1b50244)
+
+
 
 
