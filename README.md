@@ -57,3 +57,65 @@ tqdm
 PyTorch
 scikit-image
 
+
+This project applies a Convolutional Neural Network (CNN) to forecast yearly sunspot numbers, using historical data from 1700 to 2014. Sunspots are a key indicator of solar activity and forecasting them is critical for space weather prediction, satellite operations, and understanding long-term climate patterns.
+
+📘 Project Overview
+
+Objective: Predict the sunspot number for future years (e.g., 2015) using deep learning.
+Approach: Use a 1D CNN model to learn patterns from time-series data.
+Dataset: Yearly sunspot numbers from 1700 to 2014.
+Output: Forecasted sunspot numbers and evaluation metrics (MAE, RMSE, MAPE, ISE).
+
+🧠 Model Architecture
+
+Preprocessing: Min-Max Normalization, windowing
+CNN Layers:
+1D Convolution Layer
+ReLU Activation
+Flatten Layer
+Dense Output Layer
+Loss Function: Mean Squared Error
+Optimizer: Adam
+📂 Directory Structure
+
+sunspot-cnn-forecast/
+├── sunspot_forecasting_lstm.ipynb     # Colab notebook (LSTM)
+├── sunspot_forecasting_cnn.ipynb      # Colab notebook (CNN)
+├── sunspotnumber.csv                  # Historical data file
+├── sunspot_forecast_results.csv       # Output predictions
+├── arima_model_summary.txt            # ARIMA baseline results
+├── README.md                          # This file
+🧪 Evaluation Metrics
+
+
+Metric	Description
+MAE	Mean Absolute Error
+RMSE	Root Mean Squared Error
+MAPE	Mean Absolute Percentage Error
+ISE	Integral of Squared Error
+📊 Results
+
+
+Year	Predicted (CNN)       	Actual
+2015	XX.XX	                [To be filled]
+
+
+
+🔍 Key Features
+
+End-to-end deep learning pipeline using CNNs
+Comparison with ARIMA model
+Dataset included (1700–2014)
+Easily adaptable for forecasting other time series
+
+
+🧠 Novelty
+
+This project is one of the few that:
+
+Applies 1D CNNs to univariate sunspot time series
+Bridges a gap noted in recent solar forecasting literature
+Demonstrates that CNNs can be lightweight alternatives to LSTM for temporal prediction
+
+
