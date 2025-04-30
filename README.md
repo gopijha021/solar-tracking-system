@@ -119,3 +119,7 @@ Bridges a gap noted in recent solar forecasting literature
 Demonstrates that CNNs can be lightweight alternatives to LSTM for temporal prediction
 
 
+![image](https://github.com/user-attachments/assets/ff08b420-7977-4cb4-96a9-07f3fb9e8741)
+
+
+
